@@ -1,0 +1,3 @@
+include ':binarypreferences'
+include ':demo'
+rootProject.name = "SimpleBinaryPreferences"
