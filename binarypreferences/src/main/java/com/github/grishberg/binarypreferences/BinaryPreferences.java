@@ -1,6 +1,8 @@
 package com.github.grishberg.binarypreferences;
 
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import java.io.BufferedInputStream;
@@ -21,13 +23,13 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
-import androidx.annotation.MainThread;
+import androidx.annotation.AnyThread;
 import androidx.annotation.Nullable;
 
 /**
  * Reads and writes {@link SharedPreferences} into binary file.
  */
-@MainThread
+@AnyThread
 class BinaryPreferences implements SharedPreferences {
     private static final String TAG = BinaryPreferences.class.getSimpleName();
     private static final byte TYPE_STRING = 0;
@@ -37,11 +39,13 @@ class BinaryPreferences implements SharedPreferences {
     private static final byte TYPE_LONG = 4;
     private static final byte TYPE_FLOAT = 5;
 
+    private final Object lock = new Object();
     private final Executor applyExecutor;
     private ArrayList<OnSharedPreferenceChangeListener> listeners = new ArrayList<>();
 
     private HashMap<String, ValueHolder> values = new HashMap<>();
     private final File preferencesFile;
+    private final Handler mainThreadHandler = new Handler(Looper.getMainLooper());
 
     public BinaryPreferences(String preferencesName) {
         this(new File(preferencesName));
@@ -120,164 +124,209 @@ class BinaryPreferences implements SharedPreferences {
 
     @Override
     public Map<String, ?> getAll() {
-        return values;
+        synchronized (lock) {
+            return new HashMap<>(values);
+        }
     }
 
     @Nullable
     @Override
     public String getString(String key, @Nullable String defValue) {
-        ValueHolder result = values.get(key);
-        return result != null ? (String) result.value : defValue;
+        synchronized (lock) {
+            ValueHolder result = values.get(key);
+            return result != null ? (String) result.value : defValue;
+        }
     }
 
     @Nullable
     @Override
     public Set<String> getStringSet(String key, @Nullable Set<String> defValues) {
-        ValueHolder result = values.get(key);
-        return result != null ? (Set<String>) result.value : defValues;
+        synchronized (lock) {
+            ValueHolder result = values.get(key);
+            return result != null ? (Set<String>) result.value : defValues;
+        }
     }
 
     @Override
     public int getInt(String key, int defValue) {
-        ValueHolder result = values.get(key);
-        return result != null ? (Integer) result.value : defValue;
+        synchronized (lock) {
+            ValueHolder result = values.get(key);
+            return result != null ? (Integer) result.value : defValue;
+        }
     }
 
     @Override
     public long getLong(String key, long defValue) {
-        ValueHolder result = values.get(key);
-        return result != null ? (Long) result.value : defValue;
+        synchronized (lock) {
+            ValueHolder result = values.get(key);
+            return result != null ? (Long) result.value : defValue;
+        }
     }
 
     @Override
     public float getFloat(String key, float defValue) {
-        ValueHolder result = values.get(key);
-        return result != null ? (Float) result.value : defValue;
+        synchronized (lock) {
+            ValueHolder result = values.get(key);
+            return result != null ? (Float) result.value : defValue;
+        }
     }
 
     @Override
     public boolean getBoolean(String key, boolean defValue) {
-        ValueHolder result = values.get(key);
-        return result != null ? (Boolean) result.value : defValue;
+        synchronized (lock) {
+            ValueHolder result = values.get(key);
+            return result != null ? (Boolean) result.value : defValue;
+        }
     }
 
     @Override
     public boolean contains(String key) {
-        return values.containsKey(key);
+        synchronized (lock) {
+            return values.containsKey(key);
+        }
     }
 
     @Override
     public Editor edit() {
-        return new BinaryEditor(applyExecutor, preferencesFile, values);
-    }
-
-    /**
-     * @return Thread-safe {@link android.content.SharedPreferences.Editor}
-     */
-    public Editor threadSafeEdit() {
-        throw new RuntimeException("Not implemented yet");
+        return new BinaryEditor();
     }
 
     @Override
     public void registerOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {
-        listeners.add(listener);
+        synchronized (lock) {
+            listeners.add(listener);
+        }
     }
 
     @Override
     public void unregisterOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {
-        listeners.remove(listener);
+        synchronized (lock) {
+            listeners.remove(listener);
+        }
     }
 
     private class BinaryEditor implements Editor {
-        private final Executor applyExecutor;
-        private final File targetFile;
-        private final HashMap<String, ValueHolder> targetValues;
         private final HashMap<String, ValueHolder> cachedValues = new HashMap<>();
         private final HashSet<String> removedValues = new HashSet<>();
+        private final HashSet<String> changedValues = new HashSet<>();
 
-        public BinaryEditor(Executor executor, File targetFile, HashMap<String, ValueHolder> targetValues) {
-            applyExecutor = executor;
-            this.targetFile = targetFile;
-            this.targetValues = targetValues;
+        public BinaryEditor() {
         }
 
         @Override
         public Editor putString(String key, @Nullable String value) {
-            cachedValues.put(key, new ValueHolder(TYPE_STRING, value));
-            return this;
+            synchronized (lock) {
+                changedValues.add(key);
+                cachedValues.put(key, new ValueHolder(TYPE_STRING, value));
+                return this;
+            }
         }
 
         @Override
         public Editor putStringSet(String key, @Nullable Set<String> values) {
-            cachedValues.put(key, new ValueHolder(TYPE_STRING_SET, values));
-            return this;
+            synchronized (lock) {
+                changedValues.add(key);
+                cachedValues.put(key, new ValueHolder(TYPE_STRING_SET, values));
+                return this;
+            }
         }
 
         @Override
         public Editor putInt(String key, int value) {
-            cachedValues.put(key, new ValueHolder(TYPE_INT, value));
-            return this;
+            synchronized (lock) {
+                changedValues.add(key);
+                cachedValues.put(key, new ValueHolder(TYPE_INT, value));
+                return this;
+            }
         }
 
         @Override
         public Editor putLong(String key, long value) {
-            cachedValues.put(key, new ValueHolder(TYPE_LONG, value));
-            return this;
+            synchronized (lock) {
+                changedValues.add(key);
+                cachedValues.put(key, new ValueHolder(TYPE_LONG, value));
+                return this;
+            }
         }
 
         @Override
         public Editor putFloat(String key, float value) {
-            cachedValues.put(key, new ValueHolder(TYPE_FLOAT, value));
-            return this;
+            synchronized (lock) {
+                changedValues.add(key);
+                cachedValues.put(key, new ValueHolder(TYPE_FLOAT, value));
+                return this;
+            }
         }
 
         @Override
         public Editor putBoolean(String key, boolean value) {
-            cachedValues.put(key, new ValueHolder(TYPE_BOOLEAN, value));
-            return this;
+            synchronized (lock) {
+                changedValues.add(key);
+                cachedValues.put(key, new ValueHolder(TYPE_BOOLEAN, value));
+                return this;
+            }
         }
 
         @Override
         public Editor remove(String key) {
-            removedValues.add(key);
-            return this;
+            synchronized (lock) {
+                removedValues.add(key);
+                return this;
+            }
         }
 
         @Override
         public Editor clear() {
-            cachedValues.clear();
-            return this;
+            synchronized (lock) {
+                cachedValues.clear();
+                return this;
+            }
         }
 
         @Override
         public boolean commit() {
             commitToMemory();
-            saveToFile(targetValues);
+            saveToFile(values);
             return true;
         }
 
         @Override
         public void apply() {
             commitToMemory();
-            applyExecutor.execute(new ApplyRunnable(targetValues));
+            applyExecutor.execute(new ApplyRunnable(values));
         }
 
         private void commitToMemory() {
             for (String removedValue : removedValues) {
-                targetValues.remove(removedValue);
+                values.remove(removedValue);
             }
-            targetValues.putAll(cachedValues);
+            values.putAll(cachedValues);
+            changedValues.addAll(removedValues);
+            notifyListeners(changedValues);
+        }
+
+        private void notifyListeners(final Set<String> keys) {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                for (String key : keys) {
+                    for (OnSharedPreferenceChangeListener listener : listeners) {
+                        listener.onSharedPreferenceChanged(BinaryPreferences.this, key);
+                    }
+                }
+            } else {
+                // Run this function on the main thread.
+                mainThreadHandler.post(() ->  notifyListeners(keys));
+            }
         }
 
         private void saveToFile(HashMap<String, ValueHolder> values) {
-            if (targetFile.exists()) {
-                if (!targetFile.delete()) {
+            if (preferencesFile.exists()) {
+                if (!preferencesFile.delete()) {
                     Log.e(TAG, "Can't delete existing file");
                 }
             }
             try {
-                targetFile.createNewFile();
-                FileOutputStream fos = new FileOutputStream(targetFile);
+                preferencesFile.createNewFile();
+                FileOutputStream fos = new FileOutputStream(preferencesFile);
                 BufferedOutputStream bos = new BufferedOutputStream(fos);
                 bos.write(getBytes(values));
                 bos.close();
@@ -291,7 +340,7 @@ class BinaryPreferences implements SharedPreferences {
                 ObjectOutputStream out;
                 out = new ObjectOutputStream(bos);
 
-                out.writeInt(targetValues.size());
+                out.writeInt(values.size());
 
                 for (Map.Entry<String, ValueHolder> entry : values.entrySet()) {
                     String name = entry.getKey();
