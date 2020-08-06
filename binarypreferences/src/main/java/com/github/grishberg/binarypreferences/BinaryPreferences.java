@@ -1,5 +1,6 @@
 package com.github.grishberg.binarypreferences;
 
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
@@ -24,13 +25,15 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 import androidx.annotation.AnyThread;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.collection.ArrayMap;
 
 /**
  * Reads and writes {@link SharedPreferences} into binary file.
  */
 @AnyThread
-class BinaryPreferences implements SharedPreferences {
+public class BinaryPreferences implements SharedPreferences {
     private static final String TAG = BinaryPreferences.class.getSimpleName();
     private static final byte TYPE_STRING = 0;
     private static final byte TYPE_STRING_SET = 1;
@@ -43,19 +46,19 @@ class BinaryPreferences implements SharedPreferences {
     private final Executor applyExecutor;
     private ArrayList<OnSharedPreferenceChangeListener> listeners = new ArrayList<>();
 
-    private HashMap<String, ValueHolder> values = new HashMap<>();
+    private ArrayMap<String, ValueHolder> values = new ArrayMap<>();
     private final File preferencesFile;
     private final Handler mainThreadHandler = new Handler(Looper.getMainLooper());
 
-    public BinaryPreferences(String preferencesName) {
-        this(new File(preferencesName));
+    public BinaryPreferences(@NonNull Context context, @NonNull String preferencesName) {
+        this(new File(context.getApplicationInfo().dataDir, preferencesName));
     }
 
-    public BinaryPreferences(File preferencesFile) {
+    public BinaryPreferences(@NonNull File preferencesFile) {
         this(preferencesFile, createExecutor());
     }
 
-    public BinaryPreferences(File preferencesFile, Executor applyExecutor) {
+    public BinaryPreferences(@NonNull File preferencesFile, @NonNull Executor applyExecutor) {
         this.preferencesFile = preferencesFile;
         this.applyExecutor = applyExecutor;
         readPreferences();
@@ -87,7 +90,7 @@ class BinaryPreferences implements SharedPreferences {
 
     private void readValues(ObjectInputStream ois) throws IOException {
         int count = ois.readInt();
-        values = new HashMap<>(count);
+        values = new ArrayMap<>(count);
         for (int i = 0; i < count; i++) {
             // 1) name
             String name = ois.readUTF();
@@ -297,11 +300,13 @@ class BinaryPreferences implements SharedPreferences {
         }
 
         private void commitToMemory() {
-            for (String removedValue : removedValues) {
-                values.remove(removedValue);
+            synchronized (lock) {
+                for (String removedValue : removedValues) {
+                    values.remove(removedValue);
+                }
+                values.putAll(cachedValues);
+                changedValues.addAll(removedValues);
             }
-            values.putAll(cachedValues);
-            changedValues.addAll(removedValues);
             notifyListeners(changedValues);
         }
 
@@ -314,11 +319,11 @@ class BinaryPreferences implements SharedPreferences {
                 }
             } else {
                 // Run this function on the main thread.
-                mainThreadHandler.post(() ->  notifyListeners(keys));
+                mainThreadHandler.post(() -> notifyListeners(keys));
             }
         }
 
-        private void saveToFile(HashMap<String, ValueHolder> values) {
+        private void saveToFile(ArrayMap<String, ValueHolder> values) {
             if (preferencesFile.exists()) {
                 if (!preferencesFile.delete()) {
                     Log.e(TAG, "Can't delete existing file");
@@ -335,7 +340,7 @@ class BinaryPreferences implements SharedPreferences {
             }
         }
 
-        private byte[] getBytes(HashMap<String, ValueHolder> values) throws IOException {
+        private byte[] getBytes(ArrayMap<String, ValueHolder> values) throws IOException {
             try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
                 ObjectOutputStream out;
                 out = new ObjectOutputStream(bos);
@@ -383,9 +388,9 @@ class BinaryPreferences implements SharedPreferences {
         }
 
         private class ApplyRunnable implements Runnable {
-            private final HashMap<String, ValueHolder> values;
+            private final ArrayMap<String, ValueHolder> values;
 
-            public ApplyRunnable(HashMap<String, ValueHolder> values) {
+            public ApplyRunnable(ArrayMap<String, ValueHolder> values) {
                 this.values = values;
             }
 
