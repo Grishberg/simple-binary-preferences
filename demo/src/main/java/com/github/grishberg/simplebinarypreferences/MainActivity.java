@@ -3,6 +3,7 @@ package com.github.grishberg.simplebinarypreferences;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Debug;
 import android.util.Log;
 
 import com.github.grishberg.binarypreferences.BinaryPreferences;
@@ -94,5 +95,9 @@ public class MainActivity extends AppCompatActivity {
 
         editor.apply();
         editorXml.apply();
+
+        if (BuildConfig.RECORD_TRACE_ON_START) {
+            Debug.stopMethodTracing();
+        }
     }
 }

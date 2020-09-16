@@ -16,6 +16,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -99,7 +100,7 @@ public class BinaryPreferences implements SharedPreferences {
 
             switch (type) {
                 case TYPE_STRING:
-                    values.put(name, new ValueHolder(type, ois.readUTF()));
+                    values.put(name, new ValueHolder(type, readUTF(ois)));
                     break;
                 case TYPE_STRING_SET:
                     int setLength = ois.readInt();
@@ -123,6 +124,19 @@ public class BinaryPreferences implements SharedPreferences {
                     break;
             }
         }
+    }
+
+    private static String readUTF(ObjectInputStream ois) throws IOException {
+        int len = ois.readShort();
+        byte[] buf = new byte[len];
+        ois.readFully(buf);
+        return new String(buf, StandardCharsets.UTF_8);
+    }
+
+    private static void writeUTF(ObjectOutputStream out, String str) throws IOException {
+        byte[] buf = str.getBytes(StandardCharsets.UTF_8);
+        out.writeShort(buf.length);
+        out.write(buf);
     }
 
     @Override
@@ -357,7 +371,7 @@ public class BinaryPreferences implements SharedPreferences {
                     Object value = valueHolder.value;
                     switch (valueHolder.type) {
                         case TYPE_STRING:
-                            out.writeUTF((String) value);
+                            writeUTF(out, (String) value);
                             break;
                         case TYPE_STRING_SET:
                             Set<String> set = (Set<String>) value;
@@ -365,7 +379,7 @@ public class BinaryPreferences implements SharedPreferences {
                             out.writeInt(setLength);
 
                             for (String str : set) {
-                                out.writeUTF(str);
+                                writeUTF(out, str);
                             }
                             break;
                         case TYPE_INT:
