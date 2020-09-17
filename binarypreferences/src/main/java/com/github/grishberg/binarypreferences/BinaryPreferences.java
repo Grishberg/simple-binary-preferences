@@ -44,7 +44,7 @@ public class BinaryPreferences implements SharedPreferences {
     private static final byte TYPE_FLOAT = 5;
 
     private final Object lock = new Object();
-    private final Executor applyExecutor;
+    private final ExecutorProvider applyExecutor;
     private ArrayList<OnSharedPreferenceChangeListener> listeners = new ArrayList<>();
 
     private ArrayMap<String, ValueHolder> values = new ArrayMap<>();
@@ -56,10 +56,16 @@ public class BinaryPreferences implements SharedPreferences {
     }
 
     public BinaryPreferences(@NonNull File preferencesFile) {
-        this(preferencesFile, createExecutor());
+        this(preferencesFile, createExecutorProvider(createExecutor()));
     }
 
     public BinaryPreferences(@NonNull File preferencesFile, @NonNull Executor applyExecutor) {
+        this.preferencesFile = preferencesFile;
+        this.applyExecutor = createExecutorProvider(applyExecutor);
+        readPreferences();
+    }
+
+    public BinaryPreferences(@NonNull File preferencesFile, @NonNull ExecutorProvider applyExecutor) {
         this.preferencesFile = preferencesFile;
         this.applyExecutor = applyExecutor;
         readPreferences();
@@ -67,6 +73,10 @@ public class BinaryPreferences implements SharedPreferences {
 
     private static Executor createExecutor() {
         return Executors.newSingleThreadExecutor();
+    }
+
+    private static ExecutorProvider createExecutorProvider(final Executor executor) {
+        return () -> executor;
     }
 
     private void readPreferences() {
@@ -94,7 +104,7 @@ public class BinaryPreferences implements SharedPreferences {
         values = new ArrayMap<>(count);
         for (int i = 0; i < count; i++) {
             // 1) name
-            String name = ois.readUTF();
+            String name = readUTF(ois);
             // 2) type
             byte type = ois.readByte();
 
@@ -310,7 +320,7 @@ public class BinaryPreferences implements SharedPreferences {
         @Override
         public void apply() {
             commitToMemory();
-            applyExecutor.execute(new ApplyRunnable(values));
+            applyExecutor.get().execute(new ApplyRunnable(values));
         }
 
         private void commitToMemory() {
@@ -365,7 +375,7 @@ public class BinaryPreferences implements SharedPreferences {
                     String name = entry.getKey();
                     ValueHolder valueHolder = entry.getValue();
 
-                    out.writeUTF(name);
+                    writeUTF(out, name);
                     out.writeByte(valueHolder.type);
 
                     Object value = valueHolder.value;
