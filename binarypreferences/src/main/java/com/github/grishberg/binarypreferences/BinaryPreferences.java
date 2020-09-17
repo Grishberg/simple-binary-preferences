@@ -6,6 +6,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import androidx.annotation.AnyThread;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.collection.ArrayMap;
+
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -24,11 +29,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-
-import androidx.annotation.AnyThread;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.collection.ArrayMap;
 
 /**
  * Reads and writes {@link SharedPreferences} into binary file.
@@ -56,18 +56,14 @@ public class BinaryPreferences implements SharedPreferences {
     }
 
     public BinaryPreferences(@NonNull File preferencesFile) {
-        this(preferencesFile, createExecutorProvider(createExecutor()));
+        this.preferencesFile = preferencesFile;
+        this.applyExecutor = createExecutorProvider(this);
+        readPreferences();
     }
 
     public BinaryPreferences(@NonNull File preferencesFile, @NonNull Executor applyExecutor) {
         this.preferencesFile = preferencesFile;
         this.applyExecutor = createExecutorProvider(applyExecutor);
-        readPreferences();
-    }
-
-    public BinaryPreferences(@NonNull File preferencesFile, @NonNull ExecutorProvider applyExecutor) {
-        this.preferencesFile = preferencesFile;
-        this.applyExecutor = applyExecutor;
         readPreferences();
     }
 
@@ -77,6 +73,25 @@ public class BinaryPreferences implements SharedPreferences {
 
     private static ExecutorProvider createExecutorProvider(final Executor executor) {
         return () -> executor;
+    }
+
+    private static ExecutorProvider createExecutorProvider(final Object lock) {
+        return new ExecutorProvider() {
+            @Nullable
+            private volatile Executor executor = null;
+
+            @Override
+            public Executor get() {
+                if (executor == null) {
+                    synchronized (lock) {
+                        if (executor == null) {
+                            executor = createExecutor();
+                        }
+                    }
+                }
+                return executor;
+            }
+        };
     }
 
     private void readPreferences() {
