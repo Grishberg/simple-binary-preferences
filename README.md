@@ -4,6 +4,11 @@
 # Simple Binary Preferences.
 Reads and writes values into binary format.
 
+## Usage
+```
+ SharedPreferences preferences = new BinaryPreferences(context, preferencesName);
+```
+
 ## Performance
 Android shared preferences VS  for 10 launches:
 Android shared preferences(ms) | simple binary preferences(ms)
