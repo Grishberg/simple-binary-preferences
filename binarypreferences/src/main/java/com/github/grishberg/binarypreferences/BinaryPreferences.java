@@ -6,11 +6,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import androidx.annotation.AnyThread;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.collection.ArrayMap;
-
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -29,6 +24,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+
+import androidx.annotation.AnyThread;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.collection.ArrayMap;
 
 /**
  * Reads and writes {@link SharedPreferences} into binary file.
@@ -50,6 +50,8 @@ public class BinaryPreferences implements SharedPreferences {
     private ArrayMap<String, ValueHolder> values = new ArrayMap<>();
     private final File preferencesFile;
     private final Handler mainThreadHandler = new Handler(Looper.getMainLooper());
+    private boolean loaded = false;
+    private Throwable throwable = null;
 
     public BinaryPreferences(@NonNull Context context, @NonNull String preferencesName) {
         this(new File(context.getApplicationInfo().dataDir, preferencesName));
@@ -94,6 +96,17 @@ public class BinaryPreferences implements SharedPreferences {
         };
     }
 
+    private void startLoadFromDisk() {
+        synchronized (lock) {
+            loaded = false;
+        }
+        new Thread("BinaryPreferences-load") {
+            public void run() {
+                readPreferences();
+            }
+        }.start();
+    }
+
     private void readPreferences() {
         if (!preferencesFile.exists()) {
             return;
@@ -111,6 +124,11 @@ public class BinaryPreferences implements SharedPreferences {
             Log.e(TAG, "File not found", e);
         } catch (IOException e) {
             Log.e(TAG, "Read error", e);
+        } finally {
+            synchronized (lock) {
+                loaded = true;
+                lock.notifyAll();
+            }
         }
     }
 
@@ -167,6 +185,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public Map<String, ?> getAll() {
         synchronized (lock) {
+            awaitLoadedLocked();
             return new HashMap<>(values);
         }
     }
@@ -175,6 +194,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public String getString(String key, @Nullable String defValue) {
         synchronized (lock) {
+            awaitLoadedLocked();
             ValueHolder result = values.get(key);
             return result != null ? (String) result.value : defValue;
         }
@@ -184,6 +204,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public Set<String> getStringSet(String key, @Nullable Set<String> defValues) {
         synchronized (lock) {
+            awaitLoadedLocked();
             ValueHolder result = values.get(key);
             return result != null ? (Set<String>) result.value : defValues;
         }
@@ -192,6 +213,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public int getInt(String key, int defValue) {
         synchronized (lock) {
+            awaitLoadedLocked();
             ValueHolder result = values.get(key);
             return result != null ? (Integer) result.value : defValue;
         }
@@ -200,6 +222,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public long getLong(String key, long defValue) {
         synchronized (lock) {
+            awaitLoadedLocked();
             ValueHolder result = values.get(key);
             return result != null ? (Long) result.value : defValue;
         }
@@ -208,6 +231,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public float getFloat(String key, float defValue) {
         synchronized (lock) {
+            awaitLoadedLocked();
             ValueHolder result = values.get(key);
             return result != null ? (Float) result.value : defValue;
         }
@@ -216,6 +240,7 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public boolean getBoolean(String key, boolean defValue) {
         synchronized (lock) {
+            awaitLoadedLocked();
             ValueHolder result = values.get(key);
             return result != null ? (Boolean) result.value : defValue;
         }
@@ -224,7 +249,20 @@ public class BinaryPreferences implements SharedPreferences {
     @Override
     public boolean contains(String key) {
         synchronized (lock) {
+            awaitLoadedLocked();
             return values.containsKey(key);
+        }
+    }
+
+    private void awaitLoadedLocked() {
+        while (!loaded) {
+            try {
+                lock.wait();
+            } catch (InterruptedException unused) {
+            }
+        }
+        if (throwable != null) {
+            throw new IllegalStateException(throwable);
         }
     }
 
@@ -248,6 +286,7 @@ public class BinaryPreferences implements SharedPreferences {
     }
 
     private class BinaryEditor implements Editor {
+        private final Object editorLock = new Object();
         private final HashMap<String, ValueHolder> cachedValues = new HashMap<>();
         private final HashSet<String> removedValues = new HashSet<>();
         private final HashSet<String> changedValues = new HashSet<>();
@@ -257,7 +296,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor putString(String key, @Nullable String value) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 changedValues.add(key);
                 cachedValues.put(key, new ValueHolder(TYPE_STRING, value));
                 return this;
@@ -266,7 +305,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor putStringSet(String key, @Nullable Set<String> values) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 changedValues.add(key);
                 cachedValues.put(key, new ValueHolder(TYPE_STRING_SET, values));
                 return this;
@@ -275,7 +314,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor putInt(String key, int value) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 changedValues.add(key);
                 cachedValues.put(key, new ValueHolder(TYPE_INT, value));
                 return this;
@@ -284,7 +323,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor putLong(String key, long value) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 changedValues.add(key);
                 cachedValues.put(key, new ValueHolder(TYPE_LONG, value));
                 return this;
@@ -293,7 +332,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor putFloat(String key, float value) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 changedValues.add(key);
                 cachedValues.put(key, new ValueHolder(TYPE_FLOAT, value));
                 return this;
@@ -302,7 +341,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor putBoolean(String key, boolean value) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 changedValues.add(key);
                 cachedValues.put(key, new ValueHolder(TYPE_BOOLEAN, value));
                 return this;
@@ -311,7 +350,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor remove(String key) {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 removedValues.add(key);
                 return this;
             }
@@ -319,7 +358,7 @@ public class BinaryPreferences implements SharedPreferences {
 
         @Override
         public Editor clear() {
-            synchronized (lock) {
+            synchronized (editorLock) {
                 cachedValues.clear();
                 return this;
             }
@@ -340,11 +379,13 @@ public class BinaryPreferences implements SharedPreferences {
 
         private void commitToMemory() {
             synchronized (lock) {
-                for (String removedValue : removedValues) {
-                    values.remove(removedValue);
+                synchronized (editorLock) {
+                    for (String removedValue : removedValues) {
+                        values.remove(removedValue);
+                    }
+                    values.putAll(cachedValues);
+                    changedValues.addAll(removedValues);
                 }
-                values.putAll(cachedValues);
-                changedValues.addAll(removedValues);
             }
             notifyListeners(changedValues);
         }
