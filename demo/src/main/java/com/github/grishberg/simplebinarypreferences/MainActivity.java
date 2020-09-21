@@ -81,16 +81,19 @@ public class MainActivity extends AppCompatActivity {
         editorXml.putString(STRING_KEY, getPackageName());
         editorXml.putStringSet("STRING_SET_KEY", someSet);
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 500; i++) {
             editor.putLong(MULTIPLE_LONG_KEY_PREFIX + i, i);
+            editorXml.putLong(MULTIPLE_LONG_KEY_PREFIX + i, i);
         }
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 500; i++) {
             editor.putString("multiple_string_" + i, "some string value " + i);
+            editorXml.putString("multiple_string_" + i, "some string value " + i);
         }
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 500; i++) {
             editor.putFloat("multiple_float_" + i, i);
+            editorXml.putFloat("multiple_float_" + i, i);
         }
 
         editor.apply();

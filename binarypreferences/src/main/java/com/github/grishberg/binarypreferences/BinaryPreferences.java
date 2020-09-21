@@ -18,6 +18,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -47,7 +48,7 @@ public class BinaryPreferences implements SharedPreferences {
     private final ExecutorProvider applyExecutor;
     private ArrayList<OnSharedPreferenceChangeListener> listeners = new ArrayList<>();
 
-    private ArrayMap<String, ValueHolder> values = new ArrayMap<>();
+    private ArrayMap<Key, ValueHolder> values = new ArrayMap<>();
     private final File preferencesFile;
     private final Handler mainThreadHandler = new Handler(Looper.getMainLooper());
     private boolean loaded = false;
@@ -96,8 +97,11 @@ public class BinaryPreferences implements SharedPreferences {
         };
     }
 
-    private void startLoadFromDisk() {
+    private void loadFromDisk() {
         synchronized (lock) {
+            if (loaded) {
+                return;
+            }
             loaded = false;
         }
         new Thread("BinaryPreferences-load") {
@@ -108,7 +112,16 @@ public class BinaryPreferences implements SharedPreferences {
     }
 
     private void readPreferences() {
+        synchronized (lock) {
+            if (loaded) {
+                return;
+            }
+        }
         if (!preferencesFile.exists()) {
+            synchronized (lock) {
+                loaded = true;
+            }
+
             return;
         }
         try (FileInputStream stream = new FileInputStream(preferencesFile)) {
@@ -118,12 +131,15 @@ public class BinaryPreferences implements SharedPreferences {
 
                 readValues(ois);
             } catch (Exception e) {
+                throwable = e;
                 Log.e(TAG, "Read error", e);
             }
         } catch (FileNotFoundException e) {
             Log.e(TAG, "File not found", e);
+            throwable = e;
         } catch (IOException e) {
             Log.e(TAG, "Read error", e);
+            throwable = e;
         } finally {
             synchronized (lock) {
                 loaded = true;
@@ -137,13 +153,25 @@ public class BinaryPreferences implements SharedPreferences {
         values = new ArrayMap<>(count);
         for (int i = 0; i < count; i++) {
             // 1) name
-            String name = readUTF(ois);
+            // 1.1 name len
+            int nameLen = ois.readShort();
+            if (nameLen < 0) {
+                Log.e(TAG, "wrong len");
+            }
+            // 1.2 name bytes
+            byte[] nameBytes = new byte[nameLen];
+            ois.readFully(nameBytes);
+            // 1.3 name hash
+            int hash = ois.readInt();
+
+            Key key = new Key(hash, nameBytes);
+
             // 2) type
             byte type = ois.readByte();
 
             switch (type) {
                 case TYPE_STRING:
-                    values.put(name, new ValueHolder(type, readUTF(ois)));
+                    values.put(key, new ValueHolder(type, readUTF(ois)));
                     break;
                 case TYPE_STRING_SET:
                     int setLength = ois.readInt();
@@ -151,19 +179,19 @@ public class BinaryPreferences implements SharedPreferences {
                     for (int setIndex = 0; setIndex < setLength; setIndex++) {
                         set.add(ois.readUTF());
                     }
-                    values.put(name, new ValueHolder(type, set));
+                    values.put(key, new ValueHolder(type, set));
                     break;
                 case TYPE_INT:
-                    values.put(name, new ValueHolder(type, ois.readInt()));
+                    values.put(key, new ValueHolder(type, ois.readInt()));
                     break;
                 case TYPE_BOOLEAN:
-                    values.put(name, new ValueHolder(type, ois.readBoolean()));
+                    values.put(key, new ValueHolder(type, ois.readBoolean()));
                     break;
                 case TYPE_LONG:
-                    values.put(name, new ValueHolder(type, ois.readLong()));
+                    values.put(key, new ValueHolder(type, ois.readLong()));
                     break;
                 case TYPE_FLOAT:
-                    values.put(name, new ValueHolder(type, ois.readFloat()));
+                    values.put(key, new ValueHolder(type, ois.readFloat()));
                     break;
             }
         }
@@ -186,7 +214,11 @@ public class BinaryPreferences implements SharedPreferences {
     public Map<String, ?> getAll() {
         synchronized (lock) {
             awaitLoadedLocked();
-            return new HashMap<>(values);
+            HashMap<String, Object> result = new HashMap<>();
+            for (Map.Entry<Key, ValueHolder> entry : values.entrySet()) {
+                result.put(entry.getKey().text, entry.getValue().value);
+            }
+            return result;
         }
     }
 
@@ -287,7 +319,7 @@ public class BinaryPreferences implements SharedPreferences {
 
     private class BinaryEditor implements Editor {
         private final Object editorLock = new Object();
-        private final HashMap<String, ValueHolder> cachedValues = new HashMap<>();
+        private final HashMap<Key, ValueHolder> cachedValues = new HashMap<>();
         private final HashSet<String> removedValues = new HashSet<>();
         private final HashSet<String> changedValues = new HashSet<>();
 
@@ -298,7 +330,7 @@ public class BinaryPreferences implements SharedPreferences {
         public Editor putString(String key, @Nullable String value) {
             synchronized (editorLock) {
                 changedValues.add(key);
-                cachedValues.put(key, new ValueHolder(TYPE_STRING, value));
+                cachedValues.put(new Key(key), new ValueHolder(TYPE_STRING, value));
                 return this;
             }
         }
@@ -307,7 +339,7 @@ public class BinaryPreferences implements SharedPreferences {
         public Editor putStringSet(String key, @Nullable Set<String> values) {
             synchronized (editorLock) {
                 changedValues.add(key);
-                cachedValues.put(key, new ValueHolder(TYPE_STRING_SET, values));
+                cachedValues.put(new Key(key), new ValueHolder(TYPE_STRING_SET, values));
                 return this;
             }
         }
@@ -316,7 +348,7 @@ public class BinaryPreferences implements SharedPreferences {
         public Editor putInt(String key, int value) {
             synchronized (editorLock) {
                 changedValues.add(key);
-                cachedValues.put(key, new ValueHolder(TYPE_INT, value));
+                cachedValues.put(new Key(key), new ValueHolder(TYPE_INT, value));
                 return this;
             }
         }
@@ -325,7 +357,7 @@ public class BinaryPreferences implements SharedPreferences {
         public Editor putLong(String key, long value) {
             synchronized (editorLock) {
                 changedValues.add(key);
-                cachedValues.put(key, new ValueHolder(TYPE_LONG, value));
+                cachedValues.put(new Key(key), new ValueHolder(TYPE_LONG, value));
                 return this;
             }
         }
@@ -334,7 +366,7 @@ public class BinaryPreferences implements SharedPreferences {
         public Editor putFloat(String key, float value) {
             synchronized (editorLock) {
                 changedValues.add(key);
-                cachedValues.put(key, new ValueHolder(TYPE_FLOAT, value));
+                cachedValues.put(new Key(key), new ValueHolder(TYPE_FLOAT, value));
                 return this;
             }
         }
@@ -343,7 +375,7 @@ public class BinaryPreferences implements SharedPreferences {
         public Editor putBoolean(String key, boolean value) {
             synchronized (editorLock) {
                 changedValues.add(key);
-                cachedValues.put(key, new ValueHolder(TYPE_BOOLEAN, value));
+                cachedValues.put(new Key(key), new ValueHolder(TYPE_BOOLEAN, value));
                 return this;
             }
         }
@@ -403,7 +435,7 @@ public class BinaryPreferences implements SharedPreferences {
             }
         }
 
-        private void saveToFile(ArrayMap<String, ValueHolder> values) {
+        private void saveToFile(ArrayMap<Key, ValueHolder> values) {
             if (preferencesFile.exists()) {
                 if (!preferencesFile.delete()) {
                     Log.e(TAG, "Can't delete existing file");
@@ -420,18 +452,26 @@ public class BinaryPreferences implements SharedPreferences {
             }
         }
 
-        private byte[] getBytes(ArrayMap<String, ValueHolder> values) throws IOException {
+        private byte[] getBytes(ArrayMap<Key, ValueHolder> values) throws IOException {
             try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
                 ObjectOutputStream out;
                 out = new ObjectOutputStream(bos);
 
                 out.writeInt(values.size());
 
-                for (Map.Entry<String, ValueHolder> entry : values.entrySet()) {
-                    String name = entry.getKey();
+                for (Map.Entry<Key, ValueHolder> entry : values.entrySet()) {
+                    // 1) name
+                    // 1.1 name len
+                    Key key = entry.getKey();
+                    out.writeShort(key.bytes.length);
+
+                    // 1.2 name bytes
+                    out.write(key.bytes);
+                    // 1.3 name hash
+                    out.writeInt(key.hash);
+
                     ValueHolder valueHolder = entry.getValue();
 
-                    writeUTF(out, name);
                     out.writeByte(valueHolder.type);
 
                     Object value = valueHolder.value;
@@ -468,9 +508,9 @@ public class BinaryPreferences implements SharedPreferences {
         }
 
         private class ApplyRunnable implements Runnable {
-            private final ArrayMap<String, ValueHolder> values;
+            private final ArrayMap<Key, ValueHolder> values;
 
-            public ApplyRunnable(ArrayMap<String, ValueHolder> values) {
+            public ApplyRunnable(ArrayMap<Key, ValueHolder> values) {
                 this.values = values;
             }
 
@@ -478,6 +518,46 @@ public class BinaryPreferences implements SharedPreferences {
             public void run() {
                 saveToFile(values);
             }
+        }
+    }
+
+    private static class Key {
+        final int hash;
+        final byte[] bytes;
+
+        @Nullable
+        private String text;
+
+        public Key(int hash, byte[] asBytes) {
+            this.hash = hash;
+            this.bytes = asBytes;
+        }
+
+        public Key(String key) {
+            hash = key.hashCode();
+            text = key;
+            bytes = key.getBytes(StandardCharsets.UTF_8);
+        }
+
+        String getText() {
+            if (text == null) {
+                text = new String(bytes, StandardCharsets.UTF_8);
+            }
+            return text;
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(@Nullable Object obj) {
+            if (obj instanceof Key) {
+                Key another = (Key) obj;
+                return Arrays.equals(another.bytes, bytes);
+            }
+            return false;
         }
     }
 
